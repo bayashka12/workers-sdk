@@ -3138,8 +3138,14 @@ const validateMigrations: ValidatorFn = (diagnostics, field, value) => {
 
 	let valid = true;
 	for (let i = 0; i < rawMigrations.length; i++) {
-		const { tag, new_classes, renamed_classes, deleted_classes, ...rest } =
-			rawMigrations[i];
+		const {
+			tag,
+			new_classes,
+			new_sqlite_classes,
+			renamed_classes,
+			deleted_classes,
+			...rest
+		} = rawMigrations[i];
 
 		valid =
 			validateAdditionalProperties(
@@ -3163,6 +3169,14 @@ const validateMigrations: ValidatorFn = (diagnostics, field, value) => {
 				diagnostics,
 				`migrations[${i}].new_classes`,
 				new_classes,
+				"string"
+			) && valid;
+
+		valid =
+			validateOptionalTypedArray(
+				diagnostics,
+				`migrations[${i}].new_sqlite_classes`,
+				new_sqlite_classes,
 				"string"
 			) && valid;
 

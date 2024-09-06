@@ -1,4 +1,5 @@
 import type { Route } from "../config/environment";
+import type { RoutingConfig } from "../experimental-assets";
 import type {
 	WorkerMetadata,
 	WorkerMetadataBinding,
@@ -255,6 +256,7 @@ export interface CfDurableObjectMigrations {
 	new_tag: string;
 	steps: {
 		new_classes?: string[];
+		new_sqlite_classes?: string[];
 		renamed_classes?: {
 			from: string;
 			to: string;
@@ -276,6 +278,10 @@ export interface CfUserLimits {
 	cpu_ms?: number;
 }
 
+export interface CfExperimentalAssets {
+	jwt: string;
+	routingConfig: RoutingConfig;
+}
 /**
  * Options for creating a `CfWorker`.
  */
@@ -341,7 +347,7 @@ export interface CfWorkerInit {
 	tail_consumers: CfTailConsumer[] | undefined;
 	limits: CfUserLimits | undefined;
 	annotations?: Record<string, string | undefined>;
-	experimental_assets_jwt: string | undefined;
+	experimental_assets: CfExperimentalAssets | undefined;
 }
 
 export interface CfWorkerContext {

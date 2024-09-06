@@ -51,12 +51,15 @@ import {
 	maybeRetrieveFileSourceMap,
 } from "../sourcemap";
 import triggersDeploy from "../triggers/deploy";
+import {
+	createDeployment,
+	patchNonVersionedScriptSettings,
+} from "../versions/api";
 import { confirmLatestDeploymentOverwrite } from "../versions/deploy";
 import { getZoneForRoute } from "../zones";
 import type { Config } from "../config";
 import type {
 	CustomDomainRoute,
-	ExperimentalAssets,
 	Route,
 	Rule,
 	ZoneIdRoute,
@@ -68,10 +71,11 @@ import type {
 	CfPlacement,
 	CfWorkerInit,
 } from "../deployment-bundle/worker";
+import type { ExperimentalAssetsOptions } from "../experimental-assets";
 import type { PostQueueBody, PostTypedConsumerBody } from "../queues/client";
 import type { LegacyAssetPaths } from "../sites";
 import type { RetrieveSourceMapFunction } from "../sourcemap";
-import type { ApiVersion } from "../versions/types";
+import type { ApiVersion, Percentage, VersionId } from "../versions/types";
 
 type Props = {
 	config: Config;
@@ -83,7 +87,7 @@ type Props = {
 	compatibilityDate: string | undefined;
 	compatibilityFlags: string[] | undefined;
 	legacyAssetPaths: LegacyAssetPaths | undefined;
-	experimentalAssets: ExperimentalAssets | undefined;
+	experimentalAssetsOptions: ExperimentalAssetsOptions | undefined;
 	vars: Record<string, string> | undefined;
 	defines: Record<string, string> | undefined;
 	alias: Record<string, string> | undefined;
@@ -739,13 +743,16 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 			: undefined;
 
 		// Upload assets if experimental assets is being used
-		const experimentalAssetsJwt: CfWorkerInit["experimental_assets_jwt"] =
-			props.experimentalAssets && !props.dryRun
-				? await syncExperimentalAssets(
-						accountId,
-						scriptName,
-						props.experimentalAssets.directory
-					)
+		const experimentalAssetsOptions =
+			props.experimentalAssetsOptions && !props.dryRun
+				? {
+						routingConfig: props.experimentalAssetsOptions?.routingConfig,
+						jwt: await syncExperimentalAssets(
+							accountId,
+							scriptName,
+							props.experimentalAssetsOptions.directory
+						),
+					}
 				: undefined;
 
 		const legacyAssets = await syncLegacyAssets(
@@ -846,7 +853,7 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 			placement,
 			tail_consumers: config.tail_consumers,
 			limits: config.limits,
-			experimental_assets_jwt: experimentalAssetsJwt,
+			experimental_assets: experimentalAssetsOptions,
 		};
 
 		sourceMapSize = worker.sourceMaps?.reduce(
@@ -896,6 +903,8 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 		if (props.dryRun) {
 			printBindings({ ...withoutStaticAssets, vars: maskedVars });
 		} else {
+			assert(accountId, "Missing accountId");
+
 			await ensureQueuesExistByConfig(config);
 			let bindingsPrinted = false;
 
@@ -914,6 +923,7 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 
 				// If we're using the new APIs, first upload the version
 				if (canUseNewVersionsDeploymentsApi) {
+					// Upload new version
 					const versionResult = await fetchResult<ApiVersion>(
 						`/accounts/${accountId}/workers/scripts/${scriptName}/versions`,
 						{
@@ -923,22 +933,16 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 						}
 					);
 
-					await fetchResult(
-						`/accounts/${accountId}/workers/scripts/${scriptName}/deployments`,
-						{
-							method: "POST",
-							body: JSON.stringify({
-								stratergy: "percentage",
-								versions: [
-									{
-										percentage: 100,
-										version_id: versionResult.id,
-									},
-								],
-							}),
-							headers: await getMetricsUsageHeaders(config.send_metrics),
-						}
-					);
+					// Deploy new version to 100%
+					const versionMap = new Map<VersionId, Percentage>();
+					versionMap.set(versionResult.id, 100);
+					await createDeployment(accountId, scriptName, versionMap, undefined);
+
+					// Update tail consumers and logpush settings
+					await patchNonVersionedScriptSettings(accountId, scriptName, {
+						tail_consumers: worker.tail_consumers,
+						logpush: worker.logpush,
+					});
 
 					const { available_on_subdomain } = await fetchResult<{
 						available_on_subdomain: boolean;
@@ -1071,7 +1075,6 @@ See https://developers.cloudflare.com/workers/platform/compatibility-dates for m
 		logger.log(`--dry-run: exiting now.`);
 		return { versionId, workerTag };
 	}
-	assert(accountId, "Missing accountId");
 
 	const uploadMs = Date.now() - start;
 
